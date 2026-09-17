@@ -13,4 +13,4 @@ jobs:
 
       - name: Test Shell
         run: |
-         ssh -o "StrictHostKeyChecking no" mijon@experimental-vm "echo hello"
+         ssh -o "StrictHostKeyChecking no" wakwaw@experimental-vm "echo hello"
