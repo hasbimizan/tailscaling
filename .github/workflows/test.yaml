@@ -12,5 +12,4 @@ jobs:
           tags: tag:github-actions
 
       - name: Test Shell
-        run: |
-         ssh -o "StrictHostKeyChecking no" mijon@experimental-vm "echo hello"
+        run: ssh mijon@experimental-vm "echo hello"
