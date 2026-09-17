@@ -13,4 +13,4 @@ jobs:
 
       - name: Test Shell
         run: |
-         ssh -o mijon@experimental-vm "echo hello"
+         ssh mijon@experimental-vm "echo hello"
