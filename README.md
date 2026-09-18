@@ -27,6 +27,12 @@ Repository Actions secrets:
 - `TS_OAUTH_CLIENT_ID`
 - `TS_OAUTH_SECRET`
 
+If the CLI runtime is not installed yet, run the idempotent provisioning workflow once. It uses the distribution's APT packages and does not configure a web server:
+
+```powershell
+gh workflow run "Provision deployment target" --ref main
+```
+
 The recipe persists `.env`, `storage`, and `database/database.sqlite` between releases. Every deployment reconciles production-safe non-secret environment values, protects `.env` with mode `0600`, generates a Laravel key if missing, migrates SQLite, verifies the release, then atomically updates `current`. It does **not** install or reconfigure Nginx/Caddy/PHP-FPM; point an existing web server at `/home/mijon/apps/tailscaling/current/public` and configure runtime ownership separately if HTTP service is required.
 
 ## Run the comparison

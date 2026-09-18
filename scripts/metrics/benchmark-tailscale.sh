@@ -60,8 +60,13 @@ trap 'exit 143' TERM
 
 [[ "$DEPLOY_REVISION" =~ ^[0-9a-f]{40}$ ]]
 sudo -n true
-command -v php python3 git curl tar /usr/bin/time >/dev/null
-"${SSH[@]}" "set -e; test \"\$(hostname -s)\" = experimental-vm; test \"\$(id -un)\" = mijon; sudo -n true; command -v php composer python3 git curl tar /usr/bin/time >/dev/null; php -r 'exit(version_compare(PHP_VERSION, \"8.2.0\", \">=\") ? 0 : 1);'; php -r 'foreach ([\"pdo_sqlite\", \"mbstring\", \"openssl\", \"tokenizer\", \"ctype\", \"fileinfo\"] as \$extension) { if (!extension_loaded(\$extension)) { fwrite(STDERR, \"Missing PHP extension: \$extension\\n\"); exit(1); } }'; composer --version; git --version"
+for command_name in php python3 git curl tar /usr/bin/time; do
+    command -v "$command_name" >/dev/null || {
+        echo "Missing controller command: $command_name" >&2
+        exit 127
+    }
+done
+"${SSH[@]}" "set -e; test \"\$(hostname -s)\" = experimental-vm; test \"\$(id -un)\" = mijon; sudo -n true; for tool in php composer python3 git curl tar /usr/bin/time; do command -v \"\$tool\" >/dev/null || { echo \"Missing target command: \$tool\" >&2; exit 127; }; done; php -r 'exit(version_compare(PHP_VERSION, \"8.2.0\", \">=\") ? 0 : 1);'; php -r 'foreach ([\"pdo_sqlite\", \"mbstring\", \"openssl\", \"tokenizer\", \"ctype\", \"fileinfo\"] as \$extension) { if (!extension_loaded(\$extension)) { fwrite(STDERR, \"Missing PHP extension: \$extension\\n\"); exit(1); } }'; composer --version; git --version"
 "$DEPLOY_BIN" --version
 
 # Use a matching warm state before the measured invocation.

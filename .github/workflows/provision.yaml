@@ -1,0 +1,26 @@
+name: Provision deployment target
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: deploy-experimental-vm
+  cancel-in-progress: false
+
+jobs:
+  provision:
+    name: Install and verify Laravel CLI runtime
+    if: github.ref == 'refs/heads/main'
+    environment: deployment-benchmark
+    runs-on: [self-hosted, experimental-vm]
+    timeout-minutes: 20
+    steps:
+      - name: Checkout provisioning script
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+
+      - name: Provision target from distribution packages
+        shell: bash
+        run: bash scripts/provision-target.sh
