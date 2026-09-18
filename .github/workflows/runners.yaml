@@ -4,9 +4,10 @@ jobs:
   build:
     runs-on: ubuntu-latest
     steps:
-      - run: echo "building..."
+      - run: echo "building..." && sleep 10
 
   deploy:
     runs-on: self-hosted
+    needs: build
     steps:
       - run: echo "deploying..."
