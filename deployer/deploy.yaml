@@ -1,0 +1,102 @@
+import:
+  - recipe/laravel.php
+
+config:
+  repository: https://github.com/hasbimizan/tailscaling.git
+  branch: main
+  sub_directory: application
+  keep_releases: 5
+  default_timeout: 900
+  dotenv_example: /dev/null
+  deployment_method: unknown
+  deployment_run_id: local
+  shared_dirs:
+    - storage
+  shared_files:
+    - .env
+    - database/database.sqlite
+  writable_dirs:
+    - bootstrap/cache
+    - database
+    - storage
+    - storage/app
+    - storage/app/public
+    - storage/framework
+    - storage/framework/cache
+    - storage/framework/cache/data
+    - storage/framework/sessions
+    - storage/framework/views
+    - storage/logs
+  writable_mode: chmod
+  writable_recursive: true
+  writable_chmod_mode: "0775"
+  composer_options: --verbose --prefer-dist --no-progress --no-interaction --no-dev --optimize-autoloader
+
+hosts:
+  tailscale:
+    hostname: experimental-vm
+    remote_user: mijon
+    deploy_path: /home/mijon/apps/tailscaling
+    forward_agent: false
+    ssh_multiplexing: true
+    ssh_arguments:
+      - -o BatchMode=yes
+      - -o StrictHostKeyChecking=accept-new
+    labels:
+      method: tailscale
+  runner:
+    local: true
+    deploy_path: /home/mijon/apps/tailscaling
+    labels:
+      method: runner
+
+tasks:
+  app:environment:
+    - run: >-
+        if [ ! -s "{{deploy_path}}/shared/.env" ]; then
+        umask 077;
+        cp "{{release_path}}/.env.example" "{{deploy_path}}/shared/.env";
+        fi;
+        sed -i 's/^APP_NAME=.*/APP_NAME="Tailscaling Laravel"/' "{{deploy_path}}/shared/.env";
+        sed -i 's/^APP_ENV=.*/APP_ENV=production/' "{{deploy_path}}/shared/.env";
+        sed -i 's/^APP_DEBUG=.*/APP_DEBUG=false/' "{{deploy_path}}/shared/.env";
+        sed -i 's#^APP_URL=.*#APP_URL=http://experimental-vm#' "{{deploy_path}}/shared/.env";
+        sed -i 's/^LOG_LEVEL=.*/LOG_LEVEL=info/' "{{deploy_path}}/shared/.env";
+        chmod 0600 "{{deploy_path}}/shared/.env"
+  app:key:
+    - run: >-
+        if ! grep -q '^APP_KEY=base64:' "{{release_path}}/.env"; then
+        {{bin/php}} "{{release_path}}/artisan" key:generate --force --no-interaction;
+        fi;
+        chmod 0600 "{{deploy_path}}/shared/.env"
+  app:permissions:
+    - run: chmod 0700 "{{deploy_path}}/shared/database"
+    - run: chmod 0600 "{{deploy_path}}/shared/database/database.sqlite"
+  app:metadata:
+    - run: >-
+        printf '%s\n' 'revision={{target}}' 'method={{deployment_method}}'
+        'run_id={{deployment_run_id}}' 'deployed_at_utc='"$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+        > "{{release_path}}/DEPLOYMENT"
+  app:verify:
+    - run: test -s "{{release_path}}/REVISION"
+    - run: test -s "{{release_path}}/DEPLOYMENT"
+    - run: grep -qx 'APP_ENV=production' "{{release_path}}/.env"
+    - run: "{{bin/php}} \"{{release_path}}/artisan\" about --only=environment"
+  deploy:
+    - deploy:prepare
+    - app:environment
+    - deploy:vendors
+    - app:key
+    - app:permissions
+    - artisan:storage:link
+    - artisan:config:cache
+    - artisan:route:cache
+    - artisan:view:cache
+    - artisan:event:cache
+    - artisan:migrate
+    - app:metadata
+    - app:verify
+    - deploy:publish
+
+after:
+  deploy:failed: deploy:unlock

@@ -1,15 +1,130 @@
-name: "Testing Tailscale"
-on: push
+name: Deploy via Tailscale SSH
+
+on:
+  workflow_dispatch:
+    inputs:
+      revision:
+        description: Exact 40-character Git commit SHA to deploy
+        required: true
+        type: string
+      baseline_seconds:
+        description: Stable idle-baseline duration in seconds
+        required: true
+        default: "60"
+        type: string
+      recovery_seconds:
+        description: Post-deploy recovery duration in seconds
+        required: true
+        default: "15"
+        type: string
+      sample_interval:
+        description: CPU/process sampling interval in seconds
+        required: true
+        default: "0.2"
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: deploy-experimental-vm
+  cancel-in-progress: false
+
+env:
+  DEPLOY_HOST: experimental-vm
+  DEPLOY_USER: mijon
+  DEPLOYER_SHA256: b55c6609653e888c672d327c407f8bba6324b9c9cc24f9dcfb3f4b3922760632
+
 jobs:
-  tailscaling:
-    runs-on: ubuntu-latest
+  deploy:
+    name: Benchmark Tailscale SSH deployment
+    if: github.ref == 'refs/heads/main'
+    environment: deployment-benchmark
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
     steps:
+      - name: Validate immutable revision input
+        shell: bash
+        env:
+          DEPLOY_REVISION: ${{ inputs.revision }}
+        run: '[[ "${DEPLOY_REVISION}" =~ ^[0-9a-f]{40}$ ]]'
+
+      - name: Checkout exact revision
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          ref: ${{ inputs.revision }}
+
+      - name: Verify checkout
+        shell: bash
+        env:
+          DEPLOY_REVISION: ${{ inputs.revision }}
+        run: test "$(git rev-parse HEAD)" = "${DEPLOY_REVISION}"
+
+      - name: Set up PHP 8.3
+        uses: shivammathur/setup-php@f3e473d116dcccaddc5834248c87452386958240 # v2
+        with:
+          php-version: "8.3"
+          coverage: none
+
+      - name: Install verified Deployer 7.5.12 PHAR
+        shell: bash
+        run: |
+          curl --fail --silent --show-error --location --retry 3 \
+            https://github.com/deployphp/deployer/releases/download/v7.5.12/deployer.phar \
+            --output "${RUNNER_TEMP}/deployer.phar"
+          echo "${DEPLOYER_SHA256}  ${RUNNER_TEMP}/deployer.phar" | sha256sum --check --strict
+          chmod 0755 "${RUNNER_TEMP}/deployer.phar"
+          "${RUNNER_TEMP}/deployer.phar" --version
+
       - name: Connect Tailscale
-        uses: tailscale/github-action@v3
+        uses: tailscale/github-action@6cae46e2d796f265265cfcf628b72a32b4d7cade # v3
         with:
           oauth-client-id: ${{ secrets.TS_OAUTH_CLIENT_ID }}
-          oauth-secret:  ${{ secrets.TS_OAUTH_SECRET }}
+          oauth-secret: ${{ secrets.TS_OAUTH_SECRET }}
           tags: tag:github-actions
+          version: 1.82.0
 
-      - name: Test Shell
-        run: ssh -o "StrictHostKeyChecking no" mijon@experimental-vm "echo hello"
+      - name: Establish authenticated SSH host entry
+        shell: bash
+        run: |
+          install -d -m 0700 ~/.ssh
+          touch ~/.ssh/known_hosts
+          chmod 0600 ~/.ssh/known_hosts
+          ssh -o BatchMode=yes -o StrictHostKeyChecking=accept-new \
+            "${DEPLOY_USER}@${DEPLOY_HOST}" true
+
+      - name: Benchmark idle and deployment phases
+        id: benchmark
+        continue-on-error: true
+        shell: bash
+        env:
+          METRICS_ROOT: ${{ runner.temp }}/tailscaling-metrics/${{ github.run_id }}-${{ github.run_attempt }}/tailscale
+          REMOTE_METRICS_ROOT: /tmp/tailscaling-metrics-${{ github.run_id }}-${{ github.run_attempt }}
+          SSH_TARGET: ${{ env.DEPLOY_USER }}@${{ env.DEPLOY_HOST }}
+          DEPLOY_BIN: ${{ runner.temp }}/deployer.phar
+          DEPLOY_REVISION: ${{ inputs.revision }}
+          BASELINE_SECONDS: ${{ inputs.baseline_seconds }}
+          RECOVERY_SECONDS: ${{ inputs.recovery_seconds }}
+          SAMPLE_INTERVAL: ${{ inputs.sample_interval }}
+          WARMUP_SECONDS: "5"
+        run: bash scripts/metrics/benchmark-tailscale.sh
+
+      - name: Upload raw and summarized metrics
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: tailscale-deploy-metrics-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/tailscaling-metrics/${{ github.run_id }}-${{ github.run_attempt }}/tailscale
+          if-no-files-found: warn
+          retention-days: 30
+
+      - name: Propagate deployment result
+        if: always()
+        shell: bash
+        run: |
+          METRICS_ROOT="${RUNNER_TEMP}/tailscaling-metrics/${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}/tailscale"
+          if [[ ! -f "${METRICS_ROOT}/deploy-exit-code" ]]; then
+            echo "Benchmark did not produce a deployment result." >&2
+            exit 1
+          fi
+          exit "$(cat "${METRICS_ROOT}/deploy-exit-code")"

@@ -1,13 +1,111 @@
-name: Test Actions Runner
-on: push
-jobs:
-  build:
-    runs-on: ubuntu-latest
-    steps:
-      - run: echo "building..." && sleep 10
+name: Deploy via Self-hosted Runner
 
+on:
+  workflow_dispatch:
+    inputs:
+      revision:
+        description: Exact 40-character Git commit SHA to deploy
+        required: true
+        type: string
+      baseline_seconds:
+        description: Stable idle-baseline duration in seconds
+        required: true
+        default: "60"
+        type: string
+      recovery_seconds:
+        description: Post-deploy recovery duration in seconds
+        required: true
+        default: "15"
+        type: string
+      sample_interval:
+        description: CPU/process sampling interval in seconds
+        required: true
+        default: "0.2"
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: deploy-experimental-vm
+  cancel-in-progress: false
+
+env:
+  DEPLOYER_SHA256: b55c6609653e888c672d327c407f8bba6324b9c9cc24f9dcfb3f4b3922760632
+
+jobs:
   deploy:
-    runs-on: self-hosted
-    needs: build
+    name: Benchmark self-hosted runner deployment
+    if: github.ref == 'refs/heads/main'
+    environment: deployment-benchmark
+    runs-on: [self-hosted, experimental-vm]
+    timeout-minutes: 30
     steps:
-      - run: echo "deploying..."
+      - name: Validate immutable revision input
+        shell: bash
+        env:
+          DEPLOY_REVISION: ${{ inputs.revision }}
+        run: '[[ "${DEPLOY_REVISION}" =~ ^[0-9a-f]{40}$ ]]'
+
+      - name: Checkout exact revision
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          ref: ${{ inputs.revision }}
+
+      - name: Verify target identity and toolchain
+        shell: bash
+        env:
+          DEPLOY_REVISION: ${{ inputs.revision }}
+        run: |
+          test "$(git rev-parse HEAD)" = "${DEPLOY_REVISION}"
+          test "$(hostname -s)" = experimental-vm
+          test "$(id -un)" = mijon
+          php --version
+          composer --version
+          python3 --version
+          git --version
+          sudo -n true
+
+      - name: Install verified Deployer 7.5.12 PHAR
+        shell: bash
+        run: |
+          curl --fail --silent --show-error --location --retry 3 \
+            https://github.com/deployphp/deployer/releases/download/v7.5.12/deployer.phar \
+            --output "${RUNNER_TEMP}/deployer.phar"
+          echo "${DEPLOYER_SHA256}  ${RUNNER_TEMP}/deployer.phar" | sha256sum --check --strict
+          chmod 0755 "${RUNNER_TEMP}/deployer.phar"
+          "${RUNNER_TEMP}/deployer.phar" --version
+
+      - name: Benchmark idle and deployment phases
+        id: benchmark
+        continue-on-error: true
+        shell: bash
+        env:
+          METRICS_ROOT: ${{ runner.temp }}/tailscaling-metrics/${{ github.run_id }}-${{ github.run_attempt }}/runner
+          DEPLOY_BIN: ${{ runner.temp }}/deployer.phar
+          DEPLOY_REVISION: ${{ inputs.revision }}
+          BASELINE_SECONDS: ${{ inputs.baseline_seconds }}
+          RECOVERY_SECONDS: ${{ inputs.recovery_seconds }}
+          SAMPLE_INTERVAL: ${{ inputs.sample_interval }}
+          WARMUP_SECONDS: "5"
+        run: bash scripts/metrics/benchmark-runner.sh
+
+      - name: Upload raw and summarized metrics
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: runner-deploy-metrics-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/tailscaling-metrics/${{ github.run_id }}-${{ github.run_attempt }}/runner
+          if-no-files-found: warn
+          retention-days: 30
+
+      - name: Propagate deployment result
+        if: always()
+        shell: bash
+        run: |
+          METRICS_ROOT="${RUNNER_TEMP}/tailscaling-metrics/${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}/runner"
+          if [[ ! -f "${METRICS_ROOT}/deploy-exit-code" ]]; then
+            echo "Benchmark did not produce a deployment result." >&2
+            exit 1
+          fi
+          exit "$(cat "${METRICS_ROOT}/deploy-exit-code")"
