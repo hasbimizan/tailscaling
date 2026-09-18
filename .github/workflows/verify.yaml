@@ -1,0 +1,33 @@
+name: Verify deployed Laravel release
+
+on:
+  workflow_dispatch:
+    inputs:
+      revision:
+        description: Exact deployed Git commit SHA expected in current
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: deploy-experimental-vm
+  cancel-in-progress: false
+
+jobs:
+  verify:
+    name: Verify current release and persistent state
+    if: github.ref == 'refs/heads/main'
+    environment: deployment-benchmark
+    runs-on: [self-hosted, experimental-vm]
+    timeout-minutes: 5
+    steps:
+      - name: Checkout verification script
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+
+      - name: Verify deployment
+        shell: bash
+        env:
+          EXPECTED_REVISION: ${{ inputs.revision }}
+        run: bash scripts/verify-deployment.sh
