@@ -10,6 +10,7 @@ This repository contains a Laravel 12 starter and two reproducible deployment pa
 - `.github/workflows/runners.yaml` — self-hosted GitHub runner on `experimental-vm` → local Deployer host.
 - `scripts/metrics/` — raw `/proc` sampler, complete `smaps_rollup` snapshots, analyzer, and workflow harnesses.
 - `docs/benchmark-methodology.md` — definitions, formulas, phase boundaries, component scope, and limitations.
+- [`docs/benchmark-results-2026-09-18.md`](docs/benchmark-results-2026-09-18.md) — measured 3×3 comparison, all process components, raw `smaps_rollup` examples, and deployment verification evidence.
 
 ## Required target state
 

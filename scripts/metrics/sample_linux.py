@@ -278,7 +278,7 @@ def classify_process(comm: str, cmdline: str) -> str:
         return "github_actions_runner"
     if "tailscaled" in haystack or re.search(r"(^|[/ ])tailscale( |$)", haystack):
         return "tailscale"
-    if "deployer/deployer" in haystack or re.search(r"[/ ]dep( |$)", haystack):
+    if "deployer.phar" in haystack or "deployer/deployer" in haystack or re.search(r"[/ ]dep( |$)", haystack):
         return "deployer"
     if "composer" in haystack:
         return "composer"
