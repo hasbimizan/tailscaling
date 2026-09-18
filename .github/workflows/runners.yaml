@@ -1,0 +1,12 @@
+name: Test Actions Runner
+on: push
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - run: echo "building..."
+
+  deploy:
+    runs-on: self-hosted
+    steps:
+      - run: echo "deploying..."
